@@ -1,0 +1,15 @@
+# DO NOT UPLOAD BELOW FOLDERS TO GITHUB
+ava/
+ava_v2.2/
+COIN_videos/
+thumos15/
+temp/
+playground/
+output/
+APIKEY/
+__pycache__/
+# DO NOT UPLOAD BELOW FILES TO GITHUB
+yolo11x-pose.pt
+playground.py
+playground_v2.ipynb
+*.pyc
