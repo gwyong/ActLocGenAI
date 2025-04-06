@@ -7,7 +7,9 @@ temp/
 playground/
 output/
 APIKEY/
+__pycache__/
 # DO NOT UPLOAD BELOW FILES TO GITHUB
 yolo11x-pose.pt
 playground.py
 playground_v2.ipynb
+*.pyc
