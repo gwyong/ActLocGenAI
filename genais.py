@@ -27,6 +27,7 @@ api_pricing_dict = {
     "o1": {"input_cost_per_1Mtks": 15.0, "cache_cost_per_1Mtks": 7.50, "output_cost_per_1Mtks": 60.0},
     "claude-3-5-sonnet-latest": {"input_cost_per_1Mtks": 3.0, "cache_cost_per_1Mtks": 3.75, "output_cost_per_1Mtks": 15.0},
     "claude-3-7-sonnet-latest": {"input_cost_per_1Mtks": 3.0, "cache_cost_per_1Mtks": 3.75, "output_cost_per_1Mtks": 15.0},
+    "gemini-2.5-pro-exp-03-25": {"input_cost_per_1Mtks": 1.25, "cache_cost_per_1Mtks": 0.00, "output_cost_per_1Mtks": 5.0},
     "gemini-2.0-flash-exp": {"input_cost_per_1Mtks": 1.25, "cache_cost_per_1Mtks": 0.00, "output_cost_per_1Mtks": 5.0},
     "gemini-2.0-flash": {"input_cost_per_1Mtks": 0.1, "cache_cost_per_1Mtks": 0.4, "output_cost_per_1Mtks": 1.0},
     "gemini-1.5-pro": {"input_cost_per_1Mtks": 1.25, "cache_cost_per_1Mtks": 0.3125, "output_cost_per_1Mtks": 5.0},
@@ -330,16 +331,16 @@ class AgentAnthropic():
                 vision_content.append(
                     {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": encoded_frame}}
                 )
-                vision_content.append(
-                    {"type": "text", "text": prompt}
-                )
+            vision_content.append(
+                {"type": "text", "text": prompt}
+            )
             MESSAGES_PER_SECOND[-1]["content"] = vision_content
 
             response = self.agent.messages.create(
                 model=self.model_name,
                 max_tokens=max_tokens,
                 messages=MESSAGES_PER_SECOND, 
-                temperature=0
+                temperature=temperature
             )
             prediction = response.content[0].text
             prediction = utils.extract_text_from_tags(prediction, tag_name="action")
@@ -376,6 +377,8 @@ class AgentAnthropic():
             response_json= json.loads(response.json())
             cost = (response_json["usage"]["input_tokens"]*self.pricing_dict["input_cost_per_1Mtks"] + response_json["usage"]["output_tokens"]*self.pricing_dict["output_cost_per_1Mtks"])/1000000
             total_cost += cost
+            print(f"Second: {second}, Cost: {cost:.4f}")
+            time.sleep(0.1)
         
         self.inference_time = time.time() - start_time
         self.inference_cost = total_cost

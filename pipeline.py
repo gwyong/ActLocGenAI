@@ -55,8 +55,7 @@ for video_path in tqdm(selected_video_files):
     df_predictions = agent.ask_about_video(video_path, prompt=query, scope=action_classes, fps=fps, temperature=0.0, max_tokens=max_tokens, output_folder_dir=output_folder_dir, save=save_metadata_df)
     utils.append_df_to_json(df_predictions, video_path, json_path)
 
-    time.sleep(3)
-    break
+    time.sleep(1)
 
 end_time = time.time()
 print(f"Total Time taken: {end_time - start_time} seconds")
