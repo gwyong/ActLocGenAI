@@ -26,11 +26,21 @@ class Prompt:
         else:
             # prompt = f"What is the worker's action? You must choose from the following options: {self.action_classes}, or type 'none' if the action is not listed. Example: {example_action}"
             # prompt = f"Select the action term that the worker is performing in the given video from the following action list: <action>{self.action_classes}</action>, or type 'none' if the action is not listed. Place your answer between <action> tag and </action>. Example: <action>{example_action}</action>"
+            # prompt = f"""
+            # # GOAL: Your task is to distinguish whether the given vidoe frames contain a specific action or an irrelevant one (i.e., none), and if it is a specific action, identify exactly what action it is.
+            # # RETURN FORMAT: Place your answer between <action> tag and </action> tag.
+            # # EXAMPLE: <action>{example_action}</action>
+            # # WARNING: If the action is not listed, type <action>none</action>.
+            # # ACTION LIST: {self.action_classes}
+            # """
             prompt = f"""
-            # GOAL: Your task is to distinguish whether the given vidoe frames contain a specific action or an irrelevant one (i.e., none), and if it is a specific action, identify exactly what action it is.
-            # RETURN FORMAT: Place your answer between <action> tag and </action> tag.
-            # EXAMPLE: <action>{example_action}</action>
-            # WARNING: If the action is not listed, type <action>none</action>.
+            # GOAL: Your task is to analyze the given video frames and identify the most likely action being performed.
+            # If the action is not part of the provided list, respond with <action>none</action>.
+            # Please return the top 3 most likely actions, in order of confidence, each wrapped in <action> tags.
+            # RETURN FORMAT:
+            <action>most_likely_action_1</action>
+            <action>most_likely_action_2</action>
+            <action>most_likely_action_3</action>
             # ACTION LIST: {self.action_classes}
             """
             return prompt

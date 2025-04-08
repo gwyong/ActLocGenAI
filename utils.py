@@ -12,9 +12,8 @@ from collections import Counter
 from moviepy import VideoFileClip
 
 def extract_text_from_tags(response, tag_name="action"):
-    match = re.search(rf"<{tag_name}>(.*?)</{tag_name}>", response)
-    # match = re.search(r'<action>(.*?)</action>', response)
-    return match.group(1) if match else response
+    # match = re.search(rf"<{tag_name}>(.*?)</{tag_name}>", response)
+    return re.findall(rf"<{tag_name}>(.*?)</{tag_name}>", response)
 
 def encode_image(image_path):
     with open(image_path, "rb") as image_file:
@@ -366,3 +365,12 @@ def time_to_seconds(time_str):
     else:
         time_obj = datetime.strptime(time_str, "%M:%S")
         return time_obj.minute * 60 + time_obj.second, None, exist_end_time
+    
+def load_json(json_path):
+    if os.path.exists(json_path):
+        with open(json_path, "r") as f:
+            data = json.load(f)
+            return data
+    else:
+        print(f"Error: The file {json_path} does not exist.")
+        return None

@@ -9,15 +9,15 @@ import torch.nn.functional as F
 
 from openai import OpenAI
 import anthropic
-# import google.generativeai as genai #NOTE: previous version
-# from google.generativeai import types #NOTE: previous version
+import google.generativeai as genai #NOTE: previous version
+from google.generativeai import types #NOTE: previous version
 
-from google import genai
-from google.genai import types
+# from google import genai #NOTE: Not work in UM
+# from google.genai import types #NOTE: Not work in UM
 
-from twelvelabs import TwelveLabs
-from twelvelabs.models.task import Task
-from twelvelabs import APIStatusError
+# from twelvelabs import TwelveLabs
+# from twelvelabs.models.task import Task
+# from twelvelabs import APIStatusError
 
 import utils, prompting
 
@@ -26,6 +26,7 @@ api_pricing_dict = {
     "gpt-4o-mini": {"input_cost_per_1Mtks": 0.15, "cache_cost_per_1Mtks": 0.075, "output_cost_per_1Mtks": 0.6},
     "o1": {"input_cost_per_1Mtks": 15.0, "cache_cost_per_1Mtks": 7.50, "output_cost_per_1Mtks": 60.0},
     "claude-3-5-sonnet-latest": {"input_cost_per_1Mtks": 3.0, "cache_cost_per_1Mtks": 3.75, "output_cost_per_1Mtks": 15.0},
+    "claude-3-7-sonnet-latest": {"input_cost_per_1Mtks": 3.0, "cache_cost_per_1Mtks": 3.75, "output_cost_per_1Mtks": 15.0},
     "gemini-2.0-flash-exp": {"input_cost_per_1Mtks": 1.25, "cache_cost_per_1Mtks": 0.00, "output_cost_per_1Mtks": 5.0},
     "gemini-2.0-flash": {"input_cost_per_1Mtks": 0.1, "cache_cost_per_1Mtks": 0.4, "output_cost_per_1Mtks": 1.0},
     "gemini-1.5-pro": {"input_cost_per_1Mtks": 1.25, "cache_cost_per_1Mtks": 0.3125, "output_cost_per_1Mtks": 5.0},
@@ -342,21 +343,39 @@ class AgentAnthropic():
             )
             prediction = response.content[0].text
             prediction = utils.extract_text_from_tags(prediction, tag_name="action")
-
-            if prediction.lower() not in scope:
-                best_text, best_sim = self.reviser.get_similarity(prediction, scope)
-                if best_sim > 0.9:
-                    prediction = best_text
-                else:
-                    print(f"Invalid action prediction: {prediction}")
-                    prediction = "none"
-                num_inconsistent_output += 1
+            # if prediction is str then do the following
+            if isinstance(prediction, str):            
+                if prediction.lower() not in scope:
+                    best_text, best_sim = self.reviser.get_similarity(prediction, scope)
+                    if best_sim > 0.9:
+                        prediction = best_text
+                    else:
+                        print(f"Invalid action prediction: {prediction}")
+                        prediction = "none"
+                    num_inconsistent_output += 1
+                predictions.append((second, prediction.lower()))
+            
+            elif isinstance(prediction, list):
+                revised_prediction = []
+                inconsistent_flag = False
+                for candidate_prediction in prediction:
+                    if candidate_prediction.lower() not in scope:
+                        best_text, best_sim = self.reviser.get_similarity(candidate_prediction, scope)
+                        if best_sim > 0.9:
+                            revised_prediction.append(best_text)
+                        else:
+                            print(f"Invalid action prediction: {candidate_prediction}")
+                            revised_prediction.append("none")
+                            inconsistent_flag = True
+                    else:
+                        revised_prediction.append(candidate_prediction.lower())
+                if inconsistent_flag:
+                    num_inconsistent_output += 1
+                predictions.append((second, revised_prediction))
             
             response_json= json.loads(response.json())
             cost = (response_json["usage"]["input_tokens"]*self.pricing_dict["input_cost_per_1Mtks"] + response_json["usage"]["output_tokens"]*self.pricing_dict["output_cost_per_1Mtks"])/1000000
             total_cost += cost
-
-            predictions.append((second, prediction.lower()))
         
         self.inference_time = time.time() - start_time
         self.inference_cost = total_cost
@@ -374,7 +393,7 @@ class AgentAnthropic():
         output = pd.DataFrame({"seconds": seconds, "predictions": predictions})
         utils.print_output(output)
         if show:
-            utils.visualize_output(output["predictions"], save_path=None, legend_classes=action_clusters, second_width=1, figsize=(15, 3))
+            utils.visualize_output(output["predictions"], save_path=None, legend_classes=scope, second_width=1, figsize=(15, 3))
 
         if save:
             output.to_csv(os.path.join(output_folder_dir, f"predictions_{self.model_name}.csv"), index=False)
