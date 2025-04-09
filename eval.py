@@ -822,6 +822,118 @@ def testing_coin_v4(path_gt_second_action_dict, path_pred_second_action_dict, ou
         save_path = os.path.join(output_folder_path, f"coin_results_{model_name}.csv")
         df_result.to_csv(save_path, index=False)
 
+def testing_coin_v5(path_gt_second_action_dict, path_pred_second_action_dict, output_folder_path="./output", save=True, save_fig=False):
+    # TODO: Someday, we will update this function.
+    # NOTE: For Gunwoo's Annotation & Top-K
+
+    df_dataset_actions = pd.read_csv("./COIN_videos/filtered_COIN_videos/task_step.csv")
+    dataset_actions = df_dataset_actions["unified_2"].unique().tolist()
+    # dataset_action_conversion = {}
+    # for i in range(len(df_dataset_actions)):
+    #     key = "---".join([df_dataset_actions.iloc[i]["Task"], df_dataset_actions.iloc[i]["Step"]])
+    #     value = df_dataset_actions.iloc[i]["unified_2"]
+    #     dataset_action_conversion[key] = value
+
+    df_manual_annotation = pd.read_csv("./output/COIN_manual_annotation/GunwooAnnotation.csv")
+    new_dataset_actions = df_manual_annotation["annotation_2"].unique().tolist()
+    # merge the two lists and remove duplicates
+    dataset_actions = list(set(dataset_actions + new_dataset_actions))
+
+    color_map = {
+        action: ("gray" if action == "none" else plt.cm.tab20(i / len(dataset_actions)))
+        for i, action in enumerate(dataset_actions)
+    }
+
+    with open(path_gt_second_action_dict, "r") as f:
+        gt_second_action_dicts = json.load(f)
+    with open(path_pred_second_action_dict, "r") as f:
+        pred_second_action_dicts = json.load(f)
+
+    df_result = pd.DataFrame(columns=["video_path", "total_acc", "total_acc_wo_none"])
+    video_paths, total_accs, total_accs_wo_none = [], [], []
+    
+    for video_path in tqdm(pred_second_action_dicts.keys()):
+        pred_second_action_dict = pred_second_action_dicts[video_path]
+        
+        if "ActLocGenAI_local" in video_path:
+            video_path = video_path.replace("../ActLocGenAI_local/", "./")
+
+        if video_path not in gt_second_action_dicts:
+            print(f"{video_path} is not in the ground-truth file.")
+            continue
+
+        gt_second_action_dict = gt_second_action_dicts[video_path]
+        
+
+        if abs(len(gt_second_action_dict) - len(pred_second_action_dict)) > 1:
+            print(f"The number of seconds in the ground-truth and prediction files are quite different. | video_path: {video_path}")
+
+        sorted_gt_seconds = sorted(gt_second_action_dict.keys(), key=int)
+        sorted_pred_seconds = sorted(pred_second_action_dict.keys(), key=int)
+        
+        gt_actions = []
+        pred_actions = []
+        total_secs = len(sorted_gt_seconds)
+        target_secs = 0
+        correct_secs_none = 0
+        correct_secs = 0
+
+        for i in range(len(sorted_gt_seconds)):
+            gt_second = sorted_gt_seconds[i]
+            if gt_second not in pred_second_action_dict:
+                continue
+            pred_second = sorted_pred_seconds[i]
+
+            pred_action_top_k_list = pred_second_action_dict[pred_second]
+            pred_action_top_k_list_revised = []
+            for pred_action in pred_action_top_k_list:
+                if pred_action != "none":
+                    if pred_action not in dataset_actions:
+                        print(f"Unknown action: {pred_action}")
+                        pred_action = "none"
+                pred_action_top_k_list_revised.append(pred_action)
+            
+            gt_action = gt_second_action_dict[gt_second]
+            gt_actions.append(gt_action)
+            
+            if gt_action == "none":
+                if gt_action in pred_action_top_k_list_revised:
+                    correct_secs_none += 1
+                    pred_actions.append(gt_action)
+                else:
+                    pred_actions.append(pred_action_top_k_list_revised[0])
+            else:
+                if gt_action in pred_action_top_k_list_revised:
+                    correct_secs += 1
+                    pred_actions.append(gt_action)
+                else:
+                    pred_actions.append(pred_action_top_k_list_revised[0])
+                target_secs += 1
+        
+        total_acc = (correct_secs+correct_secs_none) / total_secs
+        if target_secs == 0:
+            total_acc_wo_none = 0
+        else:
+            total_acc_wo_none = correct_secs / target_secs
+        video_paths.append(video_path)
+        total_accs.append(total_acc)
+        total_accs_wo_none.append(total_acc_wo_none)
+
+        if save_fig:
+            save_path = os.path.join(output_folder_path, os.path.basename(path_pred_second_action_dict).replace(".json", "_")+os.path.basename(video_path).replace(".mp4", ".png"))
+            plot_action_bars(gt_actions, pred_actions, save_path=save_path, color_map=color_map, legend_classes=dataset_actions)
+    
+    df_result["video_path"] = video_paths
+    df_result["total_acc"] = total_accs
+    df_result["total_acc_wo_none"] = total_accs_wo_none
+    print(f"Average Total Accuracy: {df_result['total_acc'].mean()}")
+    print(f"Average Total Accuracy (w/o 'none'): {df_result['total_acc_wo_none'].mean()}")
+
+    if save:
+        model_name = path_pred_second_action_dict.split("/")[-1].replace("predictions_", "").replace(".json", "")
+        save_path = os.path.join(output_folder_path, f"coin_results_{model_name}.csv")
+        df_result.to_csv(save_path, index=False)
+
 def visualize_results(path_gt_second_action_dict, path_pred_second_action_dict, output_folder_path="./output", save=True):
     with open(path_gt_second_action_dict, "r") as f:
         annotations = json.load(f)
@@ -1030,10 +1142,16 @@ def visualize_results(path_gt_second_action_dict, path_pred_second_action_dict, 
             #     gt_label = dataset_action_conversion[key]
 
             pred_label = pred_labels.get(str(seconds), "none")
-            if pred_label != "none":
-                # pred_label = pred_label.split(" - ")[-1]
-                if pred_label not in dataset_actions:
-                    print(f"Unknown action: {pred_label}")
+            if isinstance(pred_label, str):
+                if pred_label != "none":
+                    # pred_label = pred_label.split(" - ")[-1]
+                    if pred_label not in dataset_actions:
+                        print(f"Unknown action: {pred_label}")
+            elif isinstance(pred_label, list):
+                if gt_label in pred_label:
+                    pred_label = gt_label
+                else:
+                    pred_label = pred_label[0]
 
             # color = GREEN if (gt_label == pred_label) or (dataset_action_conversion[gt_label] == dataset_action_conversion[pred_label]) else RED
             color = GREEN if gt_label == pred_label else RED
@@ -1063,17 +1181,19 @@ if __name__ == "__main__":
 
     # path_pred_second_action_dict = "./COIN_videos/filtered_COIN_videos/predictions_gpt-4o_1.json"
     # path_pred_second_action_dict = "./COIN_videos/filtered_COIN_videos/predictions_gpt-4o_2.json"
-    path_pred_second_action_dict = "./COIN_videos/filtered_COIN_videos/predictions_gpt-4o_4.json"
+    # path_pred_second_action_dict = "./COIN_videos/filtered_COIN_videos/predictions_gpt-4o_4.json"
+    path_pred_second_action_dict = "./COIN_videos/filtered_COIN_videos/predictions_claude-3-7-sonnet-latest_2.json"
     # path_pred_second_action_dict = "./COIN_videos/filtered_COIN_videos/predictions_gemini-1.5-pro_1.json"
     # path_pred_second_action_dict = "./COIN_videos/filtered_COIN_videos/predictions_gemini-2.0-flash-exp_1.json"
     # path_pred_second_action_dict = "./COIN_videos/filtered_COIN_videos/predictions_gemini-2.0-flash_1.json"
     # path_pred_second_action_dict = "./COIN_videos/filtered_COIN_videos/predictions_claude-3-5-sonnet-latest_1.json"
+    
     # testing_coin(path_gt_second_action_dict, path_pred_second_action_dict, output_folder_path="./output", save=True, save_fig=True)
     # testing_coin_v2(path_gt_second_action_dict, path_pred_second_action_dict, output_folder_path="./output", save=True, save_fig=True)
     # testing_coin_v3(path_gt_second_action_dict, path_pred_second_action_dict, output_folder_path="./output", save=True, save_fig=True)
-    testing_coin_v4(path_gt_second_action_dict, path_pred_second_action_dict, output_folder_path="./output", save=True, save_fig=True)
+    # testing_coin_v4(path_gt_second_action_dict, path_pred_second_action_dict, output_folder_path="./output", save=True, save_fig=True)
+    testing_coin_v5(path_gt_second_action_dict, path_pred_second_action_dict, output_folder_path="./output", save=True, save_fig=True)
     visualize_results(path_gt_second_action_dict, path_pred_second_action_dict, output_folder_path="./output", save=True)
-
     
     # txt = """
     #     [

@@ -87,19 +87,37 @@ class AgentOpenAI():
             response = self.agent.chat.completions.create(**params)
             prediction = response.choices[0].message.content
             prediction = utils.extract_text_from_tags(prediction, tag_name="action")
-            if prediction.lower() not in scope:
-                best_text, best_sim = self.reviser.get_similarity(prediction, scope)
-                if best_sim > 0.9:
-                    prediction = best_text
-                else:
-                    print(f"Invalid action prediction: {prediction}")
-                    prediction = "none"
-                num_inconsistent_output += 1
+            
+            if isinstance(prediction, str):
+                if prediction.lower() not in scope:
+                    best_text, best_sim = self.reviser.get_similarity(prediction, scope)
+                    if best_sim > 0.9:
+                        prediction = best_text
+                    else:
+                        print(f"Invalid action prediction: {prediction}")
+                        prediction = "none"
+                    num_inconsistent_output += 1
+
+                predictions.append((second, prediction.lower()))
+            
+            elif isinstance(prediction, list):
+                prediction = [item.lower() for item in prediction]
+                is_inconsistent = False
+                for item in prediction:
+                    if item not in scope:
+                        best_text, best_sim = self.reviser.get_similarity(item, scope)
+                        if best_sim > 0.9:
+                            prediction[prediction.index(item)] = best_text
+                        else:
+                            is_inconsistent = True
+                            prediction[prediction.index(item)] = "none"
+                if is_inconsistent:
+                    num_inconsistent_output += 1
+                
+                predictions.append((second, prediction))
             
             cost = (response.usage.prompt_tokens*self.pricing_dict["input_cost_per_1Mtks"] + response.usage.completion_tokens*self.pricing_dict["output_cost_per_1Mtks"])/1000000
             total_cost += cost
-
-            predictions.append((second, prediction.lower()))
         
         self.inference_time = time.time() - start_time
         self.inference_cost = total_cost

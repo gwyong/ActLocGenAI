@@ -1,2 +1,5 @@
 COIN_videos/
 APIKEY/
+output/
+temp/
+__pycache__/
