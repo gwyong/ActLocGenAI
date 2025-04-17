@@ -5,12 +5,12 @@ from tqdm import tqdm
 
 seed = 42
 random.seed(seed)
-# model_name = "gpt-4o"
+model_name = "gpt-4o"
 # model_name = "gemini-2.0-flash"
-model_name = "gemini-2.5-pro-preview-03-25--image"
+# model_name = "gemini-2.5-pro-preview-03-25--image"
 # model_name = "gemini-2.5-pro-exp-03-25--image"
 # model_name = "claude-3-7-sonnet-latest"
-fps = 2
+fps = 4
 max_tokens = 2048 # 2048
 save_metadata_df = False
 output_folder_dir = "output"
@@ -18,12 +18,28 @@ output_folder_dir = "output"
 df_task_step = pd.read_csv("./COIN_videos/filtered_COIN_videos/task_step.csv")
 # action_classes = [" - ".join([df_task_step.iloc[i]["Task"], df_task_step.iloc[i]["Step"]]) for i in range(len(COIN_task_interested))]
 action_classes = df_task_step["unified_3"].unique().tolist()
-prompter = prompting.Prompt(action_classes)
+act_classes, obj_classes = [], []
+for action in action_classes:
+    if action == "none":
+        act_classes.append("none")
+        obj_classes.append("none")
+    else:
+        tokens = action.split(" ")
+        obj_classes.append(tokens[-1])
+        act_classes.append(" ".join(tokens[:-1]))
+action_classes = list(set(act_classes))
+object_classes = list(set(obj_classes))
+# prompter = prompting.Prompt(action_classes)
+prompter = prompting.Prompt(action_classes=action_classes, object_classes=object_classes)
 example_action = random.choice(action_classes)
-print(f"# of Total Actions: {len(action_classes)}| Example Action: {example_action}")
+# print(f"# of Total Actions: {len(action_classes)}| Example Action: {example_action}")
+print(f"# of Total Actions: {len(action_classes)}| Example Action: {action_classes[0]}")
+print(f"# of Total Objects: {len(object_classes)}| Example Object: {object_classes[0]}")
+
 if "none" not in action_classes:
     action_classes.append("none")
 query = prompter.get_prompt(model_name, example_action=example_action)
+print(f"Query: {query}")
 
 # dataset_folder_path = "./ava/train_preprocessed"
 dataset_folder_path = "./COIN_videos/filtered_COIN_videos"

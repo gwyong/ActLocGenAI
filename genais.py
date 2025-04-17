@@ -692,6 +692,7 @@ class AgentGoogle():
         
         else: #NOTE: when input type is image
             sampled_frames_by_second = utils.extract_frames_for_gemini(video_path, fps)
+            duration = int(utils.get_video_duration(video_path))
             start_time = time.time()
             predictions = []
             num_inconsistent_output = 0
@@ -774,8 +775,8 @@ class AgentGoogle():
         if os.path.exists("temp.mp4"):
                 os.remove("temp.mp4")
         
-        # if os.path.exists("./temp_gemini"):
-        #     shutil.rmtree("./temp_gemini")
+        if os.path.exists("./temp_gemini"):
+            shutil.rmtree("./temp_gemini")
             
         return output
     
@@ -826,7 +827,7 @@ class AgentGoogle():
             '.png': 'image/png',
             '.gif': 'image/gif',
             '.webp': 'image/webp',
-        }.get(extension, 'image/jpeg') # 모르면 기본값 사용
+        }.get(extension, 'image/jpeg') # When you don't know the extension, default to jpeg
 
         with open(image_path, 'rb') as f:
             img_bytes = f.read()
