@@ -2,4 +2,5 @@ COIN_videos/
 APIKEY/
 output/
 temp/
+temp_gemini/
 __pycache__/

@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 from typing import List, Literal, Optional
 
 class Prompt:
-    def __init__(self, action_classes):
+    def __init__(self, action_classes, object_classes=None, top_k=5):
         # self.action_classes = ["lift", "pick", "carry", "place", "hold", "pinch", "push", "pull", "install", "tighten", "remove", "cut", "lower", "turn", "open", "close", "none"]
         # self.action_classes = ["carry/hold", "close", "cut", "lift/pick up", "open", "press", "pull", "push", "put down", "turn", "none"]  # for AVA dataset
         # self.action_classes = ["lift", "pull", "hold", "place", "load", "remove", "install", "apply", "put", "insert", "tighten", "unload", "open", "close", "cut", "take", "none"]  # for COIN Dataset
@@ -12,9 +12,12 @@ class Prompt:
         # self.action_classes = [key for key in self.action_classes.keys()]
         # self.action_classes.append("none")
         self.action_classes = action_classes
+        self.object_classes = object_classes
+        self.top_k = top_k
     
     def get_prompt(self, model_name, example_action):
-        if model_name in ["gemini-2.0-flash-exp", "gemini-1.5-pro", "gemini-2.0-flash"]:
+        # if model_name in ["gemini-2.0-flash-exp", "gemini-1.5-pro", "gemini-2.0-flash"]:
+        if model_name in ["gemini-2.0-flash-exp--video", "gemini-1.5-pro--video", "gemini-2.0-flash--video"]:
             prompt_for_gemini =  f"Call set_timecodes once using the following instructions: Identify a worker's all actions in the video. Action class must be in the following list: {self.action_classes}. Example: {example_action}" # Also, identify the start time of each action.
             return prompt_for_gemini
         
@@ -33,16 +36,64 @@ class Prompt:
             # # WARNING: If the action is not listed, type <action>none</action>.
             # # ACTION LIST: {self.action_classes}
             # """
-            prompt = f"""
-            # GOAL: Your task is to analyze the given video frames and identify the most likely action being performed.
-            # If the action is not part of the provided list, respond with <action>none</action>.
-            # Please return the top 3 most likely actions, in order of confidence, each wrapped in <action> tags.
-            # RETURN FORMAT:
-            <action>most_likely_action_1</action>
-            <action>most_likely_action_2</action>
-            <action>most_likely_action_3</action>
-            # ACTION LIST: {self.action_classes}
-            """
+            # prompt = f"""
+            # # GOAL: Your task is to analyze the given video frames and identify the most likely action being performed.
+            # # If the action is not part of the provided list, respond with <action>none</action>.
+            # # Please return the top 3 most likely actions, in order of confidence, each wrapped in <action> tags.
+            # # RETURN FORMAT:
+            # <action>most_likely_action_1</action>
+            # <action>most_likely_action_2</action>
+            # <action>most_likely_action_3</action>
+            # # ACTION LIST: {self.action_classes}
+            # """
+            if self.object_classes is None:
+                prompt = f"""
+                # GOAL:
+                You are given several sampled video frames from a 1-second interval.
+                Your task is to analyze these frames and identify the most likely action-object pairs occurring during that second.
+
+                Please select and return the **top {self.top_k} most likely action-object pairs** from the provided list, ordered by confidence.
+                Each prediction should be wrapped in <action> tags as shown below.
+
+                If none of the action-object pairs from the list appear to be happening, respond with:
+                <action>none</action>
+
+                # RETURN FORMAT (strictly follow this format):
+                <action>most_likely_action_object_pair_1</action>
+                <action>most_likely_action_object_pair_2</action>
+                <action>most_likely_action_object_pair_3</action>
+
+                # Action-Object Pair List:
+                {self.action_classes}
+                """
+            else:
+                prompt = f"""
+                # GOAL:
+                You are given several sampled video frames from a 1-second interval.
+                Your task is to analyze these frames and identify the most likely **action-object pairs** taking place during that second.
+
+                You are provided with:
+                - A list of possible actions
+                - A list of possible objects
+
+                Please generate and select the top {self.top_k} most likely **action-object combinations** from these two lists that best describe the scene.
+                Return your answers in descending order of confidence.  
+                Each result should be written in the format <action>action object</action> (e.g., <action>install panel</action>).
+
+                If none of the combinations seem to be occurring, return:
+                <action>none</action>
+
+                # RETURN FORMAT (strictly follow this format):
+                <action>most_likely_action-object_pair_1</action>
+                <action>most_likely_action-object_pair_2</action>
+                <action>most_likely_action-object_pair_3</action>
+
+                # Action List:
+                {self.action_list}
+
+                # Object List:
+                {self.object_list}
+                """
             return prompt
         
     def get_video_level_prompt(self, scope, example):

@@ -95,6 +95,78 @@ def extract_frames(video_path, fps, output_dir=".", save=False):
     
     return sampled_frames_by_second
 
+def extract_frames_for_gemini(video_path, fps, output_dir="./temp_gemini"):
+    """
+    Extract frames from a video file at a specified frames per second (fps) rate and optionally saves them.
+    Args:
+        video_path (str): Path to the input video file.
+        fps (int): Target frames per second to extract from the video.
+        output_dir (str, optional): Directory to save the extracted frames. Defaults to ".".
+        save (bool, optional): Whether to save the extracted frames to disk. Defaults to False.
+    Returns:
+        dict: A dictionary where keys are seconds (int) and values are lists of frame paths (str).
+    Raises:
+        ValueError: If the video file cannot be opened.
+    """
+    
+    video_name = os.path.splitext(os.path.basename(video_path))[0]
+    save_dir = os.path.join(output_dir, video_name)
+    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(save_dir, exist_ok=True)
+
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        print(f"Error: Unable to open video file {video_path}")
+        return
+    original_fps = cap.get(cv2.CAP_PROP_FPS)
+
+    frames_by_second = {}
+    frame_count = 0
+
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        seconds = int(frame_count / original_fps)
+        frame_time = frame_count / original_fps
+        filename = f"frame_{frame_count}_{frame_time:.2f}sec.jpg"
+        
+        if seconds not in frames_by_second:
+            frames_by_second[seconds] = []
+
+        frames_by_second[seconds].append((filename, frame))
+        
+        frame_count += 1
+    
+    cap.release()
+
+    sampled_frames_by_second = {}
+    for second, frame_tuples in sorted(frames_by_second.items(), key=lambda x: int(x[0])):
+        if len(frame_tuples) <= fps:
+            # if the number of frames is less than the target fps, use all frames
+            sampled_indices = list(range(len(frame_tuples)))
+        else:
+            if fps == 1:
+                # if the target fps is 1, use the middle frame
+                sampled_indices = [len(frame_tuples) // 2]
+            else:
+                # otherwise, sample frames evenly
+                step = len(frame_tuples) / (fps - 1)
+                sampled_indices = [round(i * step) for i in range(fps)]
+        
+        sampled_indices = list(set(sampled_indices))  # Ensure unique indices
+        sampled_indices = [min(len(frame_tuples) - 1, idx) for idx in sampled_indices]  # Clamp indices to valid range
+        sampled_frames = []
+
+        for idx in sampled_indices:
+            frame_filename = os.path.join(save_dir, frame_tuples[idx][0])
+            cv2.imwrite(frame_filename, frame_tuples[idx][1])
+            sampled_frames.append(frame_filename)
+        sampled_frames_by_second[second] = sampled_frames
+    
+    return sampled_frames_by_second
+
 def extend_video(video_path, slow_factor):
     # In Google Gemini, slow_factor will be the same as fps.
     # cap = cv2.VideoCapture(video_path)

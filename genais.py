@@ -1,4 +1,4 @@
-import os, glob, time, json, re, random
+import os, glob, time, json, re, random, shutil
 import base64, cv2
 import pandas as pd
 
@@ -9,11 +9,11 @@ import torch.nn.functional as F
 
 from openai import OpenAI
 import anthropic
-import google.generativeai as genai #NOTE: previous version
-from google.generativeai import types #NOTE: previous version
+# import google.generativeai as genai #NOTE: previous version
+# from google.generativeai import types #NOTE: previous version
 
-# from google import genai #NOTE: Not work in UM
-# from google.genai import types #NOTE: Not work in UM
+from google import genai #NOTE: Not work in UM
+from google.genai import types #NOTE: Not work in UM
 
 # from twelvelabs import TwelveLabs
 # from twelvelabs.models.task import Task
@@ -27,7 +27,9 @@ api_pricing_dict = {
     "o1": {"input_cost_per_1Mtks": 15.0, "cache_cost_per_1Mtks": 7.50, "output_cost_per_1Mtks": 60.0},
     "claude-3-5-sonnet-latest": {"input_cost_per_1Mtks": 3.0, "cache_cost_per_1Mtks": 3.75, "output_cost_per_1Mtks": 15.0},
     "claude-3-7-sonnet-latest": {"input_cost_per_1Mtks": 3.0, "cache_cost_per_1Mtks": 3.75, "output_cost_per_1Mtks": 15.0},
-    "gemini-2.5-pro-exp-03-25": {"input_cost_per_1Mtks": 1.25, "cache_cost_per_1Mtks": 0.00, "output_cost_per_1Mtks": 5.0},
+    "gemini-2.5-pro-preview-03-25": {"input_cost_per_1Mtks": 1.25, "cache_cost_per_1Mtks": 0.00, "output_cost_per_1Mtks": 10.0},
+    "gemini-2.5-pro-exp-03-25": {"input_cost_per_1Mtks": 1.25, "cache_cost_per_1Mtks": 0.00, "output_cost_per_1Mtks": 10.0},
+    "gemini-2.5.pro-exp-03-25": {"input_cost_per_1Mtks": 1.25, "cache_cost_per_1Mtks": 0.00, "output_cost_per_1Mtks": 10.0},
     "gemini-2.0-flash-exp": {"input_cost_per_1Mtks": 1.25, "cache_cost_per_1Mtks": 0.00, "output_cost_per_1Mtks": 5.0},
     "gemini-2.0-flash": {"input_cost_per_1Mtks": 0.1, "cache_cost_per_1Mtks": 0.4, "output_cost_per_1Mtks": 1.0},
     "gemini-1.5-pro": {"input_cost_per_1Mtks": 1.25, "cache_cost_per_1Mtks": 0.3125, "output_cost_per_1Mtks": 5.0},
@@ -425,7 +427,7 @@ class AgentAnthropic():
         return output
     
 class AgentGoogle():
-    def __init__(self, logger=None, model_name="gemini-2.0-flash-exp", api_key=None, region=None):
+    def __init__(self, logger=None, model_name="gemini-2.0-flash-exp--video", api_key=None, region=None):
         """
         Initialize Google Agent class.
         Args:
@@ -435,14 +437,16 @@ class AgentGoogle():
             region (str, optional): Region for the API. Defaults to None. NOTE: Unused.
         """
         self.logger = logger
-        self.model_name = model_name
-        self.pricing_dict = api_pricing_dict[model_name]
+        self.model_name = model_name.split("--")[0]
+        self.input_type = model_name.split("--")[1] if len(model_name.split("--")) > 1 else "video"
+        self.pricing_dict = api_pricing_dict[self.model_name]
         self.api_key = api_key
         self.region = region
         self.max_video_size = 2000
         self.reviser = AgentBERT()
 
-        self.SYSTEM_PROMPT = "When given a video and a query, call the relevant function only once with the appropriate timecodes and text for the video"
+        if self.input_type == "video":
+            self.SYSTEM_PROMPT = "When given a video and a query, call the relevant function only once with the appropriate timecodes and text for the video"
         
         set_timecodes = types.FunctionDeclaration(
             name="set_timecodes",
@@ -561,138 +565,218 @@ class AgentGoogle():
     def ask_about_video(self, video_path, prompt="", scope=[], fps=1, temperature=0.0, max_tokens=512, output_folder_dir="output", save=False, show=False):
         scope = [item.lower() for item in scope]
         video_path = utils.resize_video(video_path, "temp.mp4", self.max_video_size)
-        original_duration = int(utils.get_video_duration(video_path))
-        if fps != 1:
-            utils.extend_video(video_path, fps)
-            video_path = f"temp_{fps}.mp4"
-        duration = int(utils.get_video_duration(video_path))
-        
-        video_file = self.agent.files.upload(file=video_path)
-        # video_file = genai.upload_file(path=video_path) #NOTE: previous version
-
-        # Check whether the file is ready to be used.
-        while video_file.state.name == "PROCESSING":
-            print('.', end='')
-            time.sleep(1)
-            video_file = self.agent.files.get(name=video_file.name)
-            # video_file = genai.get_file(video_file.name) #NOTE: previous version
-
-        if video_file.state.name == "FAILED":
-            raise ValueError(video_file.state.name)
-
         total_cost = 0.0
-        inference_start_time = time.time()
-        num_inconsistent_output = 0
-
-        ###############################################################
-        # response = self.agent.generate_content( #NOTE: previous version
-        #     contents=[video_file, GeminiAnalysisMode['ACT_DETECTION']],
-
-        # )
-        
-        response = self.agent.models.generate_content(
-            model=self.model_name,
-            config=types.GenerateContentConfig(
-                system_instruction=self.SYSTEM_PROMPT,
-                response_mime_type="application/json",
-                response_schema=self.response_schema,
-                max_output_tokens=max_tokens,
-                temperature=temperature),
-            contents=[video_file, prompt]
-        )
-        ###############################################################
-        response_text = response.candidates[0].content.parts[0].text
-        response_text = utils.fix_broken_json(response_text)
-        response_json = json.loads(response_text)
-        modified_response = response_json
-        """
-        # NOTE: This function does not work well.
-        if response.candidates[0].content.parts[0].function_call.name == "set_timecodes":
-            modified_response = utils.set_timecodes_func_for_gemini(response.candidates[0].content.parts[0].function_call.args['timecodes'])
-        elif response.candidates[0].content.parts[0].function_call.name == "set_timecodes_with_objects":
-            modified_response = utils.set_timecodes_with_objects_func_for_gemini(response.candidates[0].content.parts[0].function_call.args['timecodes'])
-        elif response.candidates[0].content.parts[0].function_call.name == "set_timecodes_with_descriptions":
-            modified_response = utils.set_timecodes_with_descriptions_func_for_gemini(response.candidates[0].content.parts[0].function_call.args['timecodes'])
-        else:
-            raise ValueError("Invalid function call")
-        """
-        
-        predictions = ["none"] * duration
-
-        for i in range(len(modified_response) - 1):
-            start_time, end_time, exist_end_time = utils.time_to_seconds(modified_response[i]['time'])
-            if not exist_end_time:
-                end_time, _, _ = utils.time_to_seconds(modified_response[i + 1]['time'])
-            prediction = modified_response[i]['text']
-            if prediction not in scope:
-                best_text, best_sim = self.reviser.get_similarity(prediction, scope)
-                if best_sim > 0.9:
-                    prediction = best_text
-                else:
-                    print(f"Invalid action prediction: {prediction}")
-                    prediction = "none"
-                    num_inconsistent_output += 1
+        if self.input_type == "video":
+            original_duration = int(utils.get_video_duration(video_path))
+            if fps != 1:
+                utils.extend_video(video_path, fps)
+                video_path = f"temp_{fps}.mp4"
+            duration = int(utils.get_video_duration(video_path))
             
-            for t in range(start_time, end_time):
-                predictions[t] = prediction
+            video_file = self.agent.files.upload(file=video_path)
+            # video_file = genai.upload_file(path=video_path) #NOTE: previous version
 
-        last_start_time, last_end_time, exist_end_time = utils.time_to_seconds(modified_response[-1]['time'])
-        if modified_response[-1]['text'] not in scope:
-            best_text, best_sim = self.reviser.get_similarity(modified_response[-1]['text'], scope)
-            if best_sim > 0.9:
-                last_action = best_text
+            # Check whether the file is ready to be used.
+            while video_file.state.name == "PROCESSING":
+                print('.', end='')
+                time.sleep(1)
+                video_file = self.agent.files.get(name=video_file.name)
+                # video_file = genai.get_file(video_file.name) #NOTE: previous version
+
+            if video_file.state.name == "FAILED":
+                raise ValueError(video_file.state.name)
+
+            inference_start_time = time.time()
+            num_inconsistent_output = 0
+
+            ###############################################################
+            # response = self.agent.generate_content( #NOTE: previous version
+            #     contents=[video_file, GeminiAnalysisMode['ACT_DETECTION']],
+
+            # )
+            
+            response = self.agent.models.generate_content(
+                model=self.model_name,
+                config=types.GenerateContentConfig(
+                    system_instruction=self.SYSTEM_PROMPT,
+                    response_mime_type="application/json",
+                    response_schema=self.response_schema,
+                    max_output_tokens=max_tokens,
+                    temperature=temperature),
+                contents=[video_file, prompt]
+            )
+            ###############################################################
+            response_text = response.candidates[0].content.parts[0].text
+            response_text = utils.fix_broken_json(response_text)
+            response_json = json.loads(response_text)
+            modified_response = response_json
+            """
+            # NOTE: This function does not work well.
+            if response.candidates[0].content.parts[0].function_call.name == "set_timecodes":
+                modified_response = utils.set_timecodes_func_for_gemini(response.candidates[0].content.parts[0].function_call.args['timecodes'])
+            elif response.candidates[0].content.parts[0].function_call.name == "set_timecodes_with_objects":
+                modified_response = utils.set_timecodes_with_objects_func_for_gemini(response.candidates[0].content.parts[0].function_call.args['timecodes'])
+            elif response.candidates[0].content.parts[0].function_call.name == "set_timecodes_with_descriptions":
+                modified_response = utils.set_timecodes_with_descriptions_func_for_gemini(response.candidates[0].content.parts[0].function_call.args['timecodes'])
             else:
-                print(f"Invalid action prediction: {modified_response[-1]['text']}")
-                last_action = "none"
-            num_inconsistent_output += 1
-        else:
-            last_action = modified_response[-1]['text']
-        
-        # print("Last action:", last_action)
-        # print("Last start time:", last_start_time)
-        # print("Last end time:", last_end_time)
-        if not exist_end_time:
-            for t in range(last_start_time, duration):
-                predictions[t] = last_action
-        else:
-            for t in range(last_start_time, last_end_time):
-                predictions[t] = last_action
-        
-        self.inference_time = time.time() - inference_start_time
-        self.inference_cost = total_cost
-        # print(f"Elapsed time: {self.inference_time:.2f} seconds")
-        # print(f"Total cost: ${self.inference_cost:.2f}")
-        if num_inconsistent_output > 0:
-            print(f"Ratio of inconsistent outputs: {num_inconsistent_output}/{len(predictions)}")
+                raise ValueError("Invalid function call")
+            """
+            
+            predictions = ["none"] * duration
 
-        if fps != 1:
-            actions_per_second = []
-            for start_idx in range(0, len(predictions), fps):
-                end_idx = min(start_idx + fps, len(predictions))  # prevent out of index error
-                majority_action = utils.get_majority_vote(predictions[start_idx:end_idx])
-                actions_per_second.append(majority_action)
-            assert abs(len(actions_per_second) - original_duration) <= 3 # predicted duration should be close to the original duration
-            predictions = actions_per_second[:original_duration]
-            os.remove(video_path)
+            for i in range(len(modified_response) - 1):
+                start_time, end_time, exist_end_time = utils.time_to_seconds(modified_response[i]['time'])
+                if not exist_end_time:
+                    end_time, _, _ = utils.time_to_seconds(modified_response[i + 1]['time'])
+                prediction = modified_response[i]['text']
+                if prediction not in scope:
+                    best_text, best_sim = self.reviser.get_similarity(prediction, scope)
+                    if best_sim > 0.9:
+                        prediction = best_text
+                    else:
+                        print(f"Invalid action prediction: {prediction}")
+                        prediction = "none"
+                        num_inconsistent_output += 1
+                
+                for t in range(start_time, end_time):
+                    predictions[t] = prediction
 
-        output = pd.DataFrame({"seconds": range(len(predictions)), "predictions": predictions})
-        if output.iloc[-1]["seconds"] != original_duration:
-            # add as many rows as needed to match the duration of the video
-            new_seconds, new_predictions = [], []
-            for t in range(output.iloc[-1]["seconds"] + 1, original_duration + 1):
-                new_seconds.append(t)
-                new_predictions.append(output.iloc[-1]["predictions"])
-            new_df = pd.DataFrame({"seconds": new_seconds, "predictions": new_predictions})
-            output = pd.concat([output, new_df], ignore_index=True)
+            last_start_time, last_end_time, exist_end_time = utils.time_to_seconds(modified_response[-1]['time'])
+            if modified_response[-1]['text'] not in scope:
+                best_text, best_sim = self.reviser.get_similarity(modified_response[-1]['text'], scope)
+                if best_sim > 0.9:
+                    last_action = best_text
+                else:
+                    print(f"Invalid action prediction: {modified_response[-1]['text']}")
+                    last_action = "none"
+                num_inconsistent_output += 1
+            else:
+                last_action = modified_response[-1]['text']
+            
+            # print("Last action:", last_action)
+            # print("Last start time:", last_start_time)
+            # print("Last end time:", last_end_time)
+            if not exist_end_time:
+                for t in range(last_start_time, duration):
+                    predictions[t] = last_action
+            else:
+                for t in range(last_start_time, last_end_time):
+                    predictions[t] = last_action
+            
+            self.inference_time = time.time() - inference_start_time
+            self.inference_cost = total_cost
+            # print(f"Elapsed time: {self.inference_time:.2f} seconds")
+            # print(f"Total cost: ${self.inference_cost:.2f}")
+            if num_inconsistent_output > 0:
+                print(f"Ratio of inconsistent outputs: {num_inconsistent_output}/{len(predictions)}")
+
+            if fps != 1:
+                actions_per_second = []
+                for start_idx in range(0, len(predictions), fps):
+                    end_idx = min(start_idx + fps, len(predictions))  # prevent out of index error
+                    majority_action = utils.get_majority_vote(predictions[start_idx:end_idx])
+                    actions_per_second.append(majority_action)
+                assert abs(len(actions_per_second) - original_duration) <= 3 # predicted duration should be close to the original duration
+                predictions = actions_per_second[:original_duration]
+                os.remove(video_path)
+
+            output = pd.DataFrame({"seconds": range(len(predictions)), "predictions": predictions})
+            if output.iloc[-1]["seconds"] != original_duration:
+                # add as many rows as needed to match the duration of the video
+                new_seconds, new_predictions = [], []
+                for t in range(output.iloc[-1]["seconds"] + 1, original_duration + 1):
+                    new_seconds.append(t)
+                    new_predictions.append(output.iloc[-1]["predictions"])
+                new_df = pd.DataFrame({"seconds": new_seconds, "predictions": new_predictions})
+                output = pd.concat([output, new_df], ignore_index=True)
         
+        else: #NOTE: when input type is image
+            sampled_frames_by_second = utils.extract_frames_for_gemini(video_path, fps)
+            start_time = time.time()
+            predictions = []
+            num_inconsistent_output = 0
+
+            for second, encoded_frames in sampled_frames_by_second.items():
+                # NOTE: For Gemini, it does not use encoded frames, but the original frames.
+                image_parts = [self._get_image_part(frame) for frame in encoded_frames]
+                contents = [prompt] + image_parts
+                
+                response = self.agent.models.generate_content(
+                model=self.model_name,
+                config=types.GenerateContentConfig(
+                    # system_instruction=self.SYSTEM_PROMPT,
+                    # response_mime_type="application/json",
+                    # response_schema=self.response_schema,
+                    max_output_tokens=max_tokens,
+                    temperature=temperature),
+                contents=contents
+                )
+                
+                prediction = response.text
+                print("second:", second, "prediction:", prediction)
+                if prediction is None:
+                    prediction = ["none"]
+                else:
+                    prediction = utils.extract_text_from_tags(prediction, tag_name="action")
+                
+                if isinstance(prediction, str):
+                    if prediction.lower() not in scope:
+                        best_text, best_sim = self.reviser.get_similarity(prediction, scope)
+                        if best_sim > 0.9:
+                            prediction = best_text
+                        else:
+                            print(f"Invalid action prediction: {prediction}")
+                            prediction = "none"
+                        num_inconsistent_output += 1
+
+                    predictions.append((second, prediction.lower()))
+                
+                elif isinstance(prediction, list):
+                    prediction = [item.lower() for item in prediction]
+                    is_inconsistent = False
+                    for item in prediction:
+                        if item not in scope:
+                            best_text, best_sim = self.reviser.get_similarity(item, scope)
+                            if best_sim > 0.9:
+                                prediction[prediction.index(item)] = best_text
+                            else:
+                                is_inconsistent = True
+                                prediction[prediction.index(item)] = "none"
+                    if is_inconsistent:
+                        num_inconsistent_output += 1
+                    
+                    predictions.append((second, prediction))
+                
+                # cost = (response.usage.prompt_tokens*self.pricing_dict["input_cost_per_1Mtks"] + response.usage.completion_tokens*self.pricing_dict["output_cost_per_1Mtks"])/1000000
+                # total_cost += cost
+            
+            self.inference_time = time.time() - start_time
+            self.inference_cost = total_cost
+            print(f"Elapsed time: {self.inference_time:.2f} seconds")
+            print(f"Total cost: ${self.inference_cost:.2f}")
+            if num_inconsistent_output > 0:
+                print(f"Ratio of inconsistent outputs: {num_inconsistent_output}/{len(sampled_frames_by_second)}")
+
+            sorted_predictions = sorted(predictions, key=lambda x: x[0])
+            seconds = [item[0] for item in sorted_predictions]
+            predictions = [item[1] for item in sorted_predictions]
+            seconds, predictions = utils.fill_missing_seconds(seconds, predictions, duration)
+            output = pd.DataFrame({"seconds": seconds, "predictions": predictions})
+
         utils.print_output(output)
+        
         if show:
             utils.visualize_output(output["predictions"], save_path=None, legend_classes=scope, second_width=1, figsize=(15, 3))
-                                   
+                                
         if save:
             output.to_csv(os.path.join(output_folder_dir, f"predictions_{self.model_name}.csv"), index=False)
+        
         if os.path.exists("temp.mp4"):
-            os.remove("temp.mp4")
+                os.remove("temp.mp4")
+        
+        # if os.path.exists("./temp_gemini"):
+        #     shutil.rmtree("./temp_gemini")
+            
         return output
     
     def classify_video(self, video_path, prompt="", scope=[], fps=16, temperature=0.0, max_tokens=256):
@@ -733,6 +817,20 @@ class AgentGoogle():
             print(f"Invalid prediction is changed: {prediction} -> {best_text}")
         
         return prediction
+    
+    def _get_image_part(self, image_path):
+        extension = os.path.splitext(image_path)[1].lower()
+        mime_type = {
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.png': 'image/png',
+            '.gif': 'image/gif',
+            '.webp': 'image/webp',
+        }.get(extension, 'image/jpeg') # 모르면 기본값 사용
+
+        with open(image_path, 'rb') as f:
+            img_bytes = f.read()
+        return types.Part.from_bytes(data=img_bytes, mime_type=mime_type)
         
 class AgentTwelveLabs():
     def __init__(self, logger=None, model_name="pegasus1.2", api_key=None, region=None):
