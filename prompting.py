@@ -89,10 +89,10 @@ class Prompt:
                 <action>most_likely_action-object_pair_3</action>
 
                 # Action List:
-                {self.action_list}
+                {self.action_classes}
 
                 # Object List:
-                {self.object_list}
+                {self.object_classes}
                 """
             return prompt
         
